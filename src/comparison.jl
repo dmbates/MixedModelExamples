@@ -1,39 +1,28 @@
-using CSV, JSON, MixedModels, NLopt, StatsModels
+using CSV, DataFrames, MixedModels
 
 const LNopts = [:LN_BOBYQA, :LN_COBYLA, :LN_NELDERMEAD, :LN_PRAXIS, :LN_SBPLX]
 
-struct Results
-    dnm::String
-    model::String
-    opts::Vector{Symbol}
-    cvgtyp::Vector{Symbol}
-    nfeval::Vector{Int}
-    minobj::Vector{Float64}
-    secs::Vector{Float64}
-end
-
-function doexample(ddir, dnm, model, optimizers::Vector{Symbol}=LNopts)
-    dat = CSV.read(joinpath(ddir, string(dnm, ".csv")))
-    for (n, v) in eachcol(dat)
-        if !any(ismissing, v)
-            dat[n] = disallowmissing(v)
+function dospec(io, ddir, spec, optimizers::Vector{Symbol}=LNopts)
+    cd(ddir) do
+        for rw in eachrow(spec)
+            dat = CSV.read(string(rw[:data], ".csv"))
+            for (n, v) in eachcol(dat)
+                if !any(ismissing, v)
+                    dat[n] = disallowmissing(v)
+                end
+            end
+            m = LinearMixedModel(@eval(@formula(Y ~ $(Meta.parse(rw[:model])))), dat)
+            optsum = m.optsum
+            optsum.maxfeval = 100_000
+            for opt in optimizers
+                println(rw[:id], ", ", opt)
+                optsum.optimizer = opt
+                secs = @elapsed(refit!(m))
+                join(io, [rw[:id], opt, optsum.returnvalue, optsum.feval, optsum.fmin, secs], ",")
+                println(io)
+            end
         end
     end
-    rhsexpr = Meta.parse(model)
-    m = fit(LinearMixedModel, @eval(@formula(Y ~ $rhsexpr)), dat)
-    cvgtyp = similar(optimizers)
-    nfeval = similar(optimizers, Int)
-    minobj = similar(optimizers, Float64)
-    secs = similar(optimizers, Float64)
-    optsum = m.optsum
-    for i in eachindex(optimizers)
-        optsum.optimizer = optimizers[i]
-        secs[i] = @elapsed(refit!(m))
-        cvgtyp[i] = optsum.returnvalue
-        nfeval[i] = optsum.feval
-        minobj[i] = optsum.fmin
-    end
-    Results(dnm, model, optimizers, cvgtyp, nfeval, minobj, secs)
 end
 
 function wrtspec(io, data, model)
